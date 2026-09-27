@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Chibi Wallpaper</string>
+    <string name="wallpaper_description">Trợ lý AI chibi sống trên màn hình chính của bạn</string>
+
+    <!-- Phần 6 — MainActivity -->
+    <string name="section_wallpaper">1. Hình nền động</string>
+    <string name="section_mic">2. Quyền micro</string>
+    <string name="section_api_key">3. Gemini API key</string>
+
+    <string name="status_checking">Đang kiểm tra…</string>
+    <string name="status_wallpaper_active">Đang đặt làm hình nền chính.</string>
+    <string name="status_wallpaper_inactive">Chưa đặt làm hình nền. Bấm nút bên dưới để đặt.</string>
+    <string name="btn_set_wallpaper">Đặt làm hình nền động</string>
+    <string name="error_set_wallpaper">Máy không hỗ trợ mở thẳng màn hình đặt hình nền. Vào Cài đặt &gt; Hình nền thử lại.</string>
+
+    <string name="status_mic_granted">Đã cấp quyền micro.</string>
+    <string name="status_mic_denied">Chưa cấp quyền micro (cần cho tính năng nói chuyện ở Phần 4).</string>
+    <string name="status_mic_denied_permanently">Đã từ chối vĩnh viễn — vào Cài đặt app để bật tay quyền Micro.</string>
+    <string name="btn_request_mic">Cấp quyền micro</string>
+
+    <string name="api_key_hint_text">Dùng cho Gemini ở Phần 4, lưu riêng trên máy, không gửi đi đâu cả ở bước này.</string>
+    <string name="hint_api_key">Dán Gemini API key vào đây</string>
+    <string name="btn_save_api_key">Lưu API key</string>
+    <string name="status_api_key_saved">Đã lưu.</string>
+    <string name="status_api_key_empty">Chưa lưu — ô trống.</string>
+</resources>

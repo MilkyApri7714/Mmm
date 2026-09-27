@@ -1,0 +1,34 @@
+{
+	"Version": 3,
+	"FileReferences": {
+		"Moc": "tingyun.moc3",
+		"Textures": [
+			"tingyun.4096/texture_00.png"
+		],
+		"Physics": "tingyun.physics3.json",
+		"DisplayInfo": "tingyun.cdi3.json",
+		"Expressions": [
+			{ "Name": "tail",      "File": "tail.exp3.json" },
+			{ "Name": "hearteyes", "File": "hearteyes.exp3.json" },
+			{ "Name": "blush",     "File": "blush.exp3.json" },
+			{ "Name": "darkface",  "File": "darkface.exp3.json" }
+		]
+	},
+	"Groups": [
+		{
+			"Target": "Parameter",
+			"Name": "EyeBlink",
+			"Ids": [
+				"ParamEyeROpen",
+				"ParamEyeRSmile",
+				"ParamEyeLOpen",
+				"ParamEyeLSmile"
+			]
+		},
+		{
+			"Target": "Parameter",
+			"Name": "LipSync",
+			"Ids": []
+		}
+	]
+}

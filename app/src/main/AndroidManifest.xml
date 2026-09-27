@@ -1,0 +1,229 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <!-- PHẦN 12 — Android 11+ giới hạn "package visibility": cần khai báo intent này để
+         ActivityResultContracts.TakePicture() tìm được app Camera khi resolveActivity(). -->
+    <queries>
+        <intent>
+            <action android:name="android.media.action.IMAGE_CAPTURE" />
+        </intent>
+    </queries>
+
+    <!-- ── Hardware feature ──────────────────────────────────────────────── -->
+    <uses-feature android:name="android.software.live_wallpaper" />
+    <uses-feature
+        android:glEsVersion="0x00020000"
+        android:required="true" />
+
+    <!-- ══════════════════════════════════════════════════════════════════════
+         QUYỀN HIỆN TẠI (Phần 4)
+         ══════════════════════════════════════════════════════════════════════ -->
+
+    <!-- PHẦN 4: STT — bắt buộc để SpeechRecognizer ghi âm -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+
+    <!-- PHẦN 14 — Nhân vật nổi đè lên app khác: quyền đặc biệt, user cấp tay ở Settings
+         (Settings.canDrawOverlays / ACTION_MANAGE_OVERLAY_PERMISSION), không xin runtime được. -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+
+    <!-- PHẦN 16 — Tự ẩn/hiện nhân vật nổi theo app đang mở: quyền đặc biệt (special permission),
+         user cấp tay ở Settings.ACTION_USAGE_ACCESS_SETTINGS, giống flow SYSTEM_ALERT_WINDOW ở
+         trên — không xin runtime được (xem ForegroundAppWatcher.hasUsageAccess). -->
+    <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS"
+        tools:ignore="ProtectedPermissions" />
+
+    <!-- PHẦN 4: Gemini API call cần internet -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <!-- PHẦN 4: AlarmManager cho tính năng nhắc nhở (set_reminder function) -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+    <!-- Android 12+ cần USE_EXACT_ALARM nếu app có target SDK ≥ 32 và muốn exact alarm không cần
+         user confirm (optional; nếu không có thì fallback về inexact trong ActionRouter) -->
+    <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
+
+    <!-- PHẦN 4: Bắn notification nhắc nhở -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <!-- PHẦN 4: Đọc giờ/ngày hệ thống (thực ra không cần permission nhưng để rõ intent) -->
+    <!-- android.permission.READ_CALENDAR — để xem lịch nếu mở rộng sau này -->
+
+    <!-- ══════════════════════════════════════════════════════════════════════
+         QUYỀN CHO TƯƠNG LAI (khai báo sẵn, chưa dùng ở Phần 4)
+         Mục tiêu: trợ lý ảo toàn diện — khai báo ở đây để Android cho phép
+         xin runtime khi cần, không cần cập nhật manifest sau.
+         ══════════════════════════════════════════════════════════════════════ -->
+
+    <!-- PHẦN 11: Đọc lịch — dùng thật cho get_today_schedule() + context awareness + chào
+         buổi sáng (xem CalendarHelper.kt). WRITE_CALENDAR khai báo sẵn cho mở rộng sau
+         (tự tạo sự kiện), chưa dùng ở Phần 11. -->
+    <uses-permission android:name="android.permission.READ_CALENDAR" />
+    <uses-permission android:name="android.permission.WRITE_CALENDAR" />
+
+    <!-- Đọc danh bạ — nhận dạng tên người trong câu hỏi ("gọi cho Mẹ") -->
+    <uses-permission android:name="android.permission.READ_CONTACTS" />
+
+    <!-- Thực hiện cuộc gọi điện thoại -->
+    <uses-permission android:name="android.permission.CALL_PHONE" />
+
+    <!-- Gửi SMS -->
+    <uses-permission android:name="android.permission.SEND_SMS" />
+
+    <!-- Camera — chụp ảnh khi user yêu cầu, hoặc nhận diện hình ảnh -->
+    <uses-permission android:name="android.permission.CAMERA" />
+
+    <!-- Vị trí — thời tiết, tìm kiếm gần đây, "nhắc nhở khi tôi về nhà" -->
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <!-- Background location — nhắc nhở theo địa điểm khi màn hình tắt -->
+    <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
+
+    <!-- Đọc/ghi bộ nhớ (ảnh, file) — Android 12 trở xuống -->
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="28" />
+    <!-- Android 13+ chia nhỏ storage permission -->
+    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
+    <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
+    <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
+
+    <!-- Đọc trạng thái mạng để biết có internet không trước khi gọi Gemini -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+
+    <!-- Bluetooth — kết nối tai nghe để phát TTS / nhận voice input -->
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+
+    <!-- Flashlight — "bật đèn pin" -->
+    <uses-permission android:name="android.permission.FLASHLIGHT" />
+
+    <!-- Đọc log hệ thống (debug only, bỏ trước khi release) -->
+    <!-- <uses-permission android:name="android.permission.READ_LOGS" /> -->
+
+    <!-- Foreground service — nếu sau này muốn STT / Gemini chạy ổn định khi locked screen -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <!-- PHẦN 14 — FloatingPetService là foreground service loại "specialUse" (không khớp category
+         chuẩn nào — không phải camera/location/media...), bắt buộc từ Android 14 (targetSdk 34). -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+
+    <!-- Vibrate — phản hồi haptic khi nhận double-tap -->
+    <uses-permission android:name="android.permission.VIBRATE" />
+
+    <!-- Wakelock — giữ CPU không ngủ khi đang xử lý Gemini response -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+
+    <!-- ════════════════════════════════════════════════════════════════════ -->
+
+    <application
+        android:allowBackup="true"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:theme="@android:style/Theme.NoTitleBar">
+
+        <!-- PHẦN 6 — MainActivity: icon thật ngoài home screen -->
+        <activity
+            android:name=".ui.MainActivity"
+            android:exported="true"
+            android:label="@string/app_name">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!-- PHẦN 4 — ChibiWallpaperService với AI stack -->
+        <service
+            android:name=".ChibiWallpaperService"
+            android:exported="true"
+            android:label="@string/app_name"
+            android:permission="android.permission.BIND_WALLPAPER">
+            <intent-filter>
+                <action android:name="android.service.wallpaper.WallpaperService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.service.wallpaper"
+                android:resource="@xml/wallpaper" />
+        </service>
+
+        <!-- PHẦN 4 — BroadcastReceiver nhận alarm nhắc nhở -->
+        <receiver
+            android:name=".ai.ReminderReceiver"
+            android:exported="false" />
+
+        <!-- PHẦN 11 — BroadcastReceiver nhận alarm chủ động (morning/weather/inactivity) -->
+        <receiver
+            android:name=".ai.ProactiveReceiver"
+            android:exported="false" />
+
+        <!-- PHẦN 11 — Đặt lại lịch chủ động sau khi máy khởi động lại -->
+        <receiver
+            android:name=".ai.BootReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
+
+        <!-- PHẦN 12 — Đọc thông báo quan trọng. User phải bật tay ở Settings > Special app
+             access > Notification access (không phải runtime permission thường). -->
+        <service
+            android:name=".ai.MilkyNotificationListenerService"
+            android:exported="true"
+            android:label="@string/app_name"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+        </service>
+
+        <!-- PHẦN 12 — Quick Settings Tile: bấm 1 cái là kích hoạt STT ngay, không cần double-tap
+             đúng vào Slime trên màn hình chính. -->
+        <service
+            android:name=".ai.QuickListenTileService"
+            android:exported="true"
+            android:icon="@drawable/ic_launcher_foreground"
+            android:label="Hỏi Milky"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+        </service>
+
+        <!-- PHẦN 12 — Activity trong suốt: chụp ảnh + hỏi giọng nói + gửi Gemini multimodal.
+             exported=false vì chỉ được mở từ trong app (wallpaper gesture hoặc MainActivity). -->
+        <activity
+            android:name=".ui.PhotoAskActivity"
+            android:exported="false"
+            android:label="Hỏi bằng ảnh"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+
+        <!-- PHẦN 14 — Nhân vật nổi đè lên app khác (desktop pet), tách biệt hoàn toàn với live
+             wallpaper. exported=false: chỉ MainActivity trong app này start/stop được.
+             foregroundServiceType="specialUse" bắt buộc từ Android 14 (targetSdk 34) vì không có
+             category chuẩn nào khớp việc hiển thị 1 overlay view nổi. -->
+        <service
+            android:name=".floating.FloatingPetService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="floating_pet_overlay" />
+        </service>
+
+        <!-- PHẦN 12 — FileProvider để chia sẻ URI ảnh chụp cho camera app ghi vào (bắt buộc từ
+             Android 7+ thay vì file:// trực tiếp). -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
+
+    </application>
+
+</manifest>

@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- PHẦN 12 — Thư mục cache chứa ảnh tạm chụp cho tính năng "Hỏi bằng ảnh" (PhotoAskActivity). -->
+<paths>
+    <cache-path name="milky_photos" path="." />
+</paths>

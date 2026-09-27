@@ -1,0 +1,39 @@
+{
+	"Version": 3,
+	"FileReferences": {
+		"Moc": "SLIME.moc3",
+		"Textures": [
+			"SLIME.4096/texture_00.png"
+		],
+		"Physics": "SLIME.physics3.json",
+		"DisplayInfo": "SLIME.cdi3.json",
+		"Motions": {
+			"Idle": [],
+			"Straw": [
+				{
+					"File": "motion/STRAW.motion3.json",
+					"FadeInTime": 0.5,
+					"FadeOutTime": 0.5
+				}
+			]
+		},
+		"Expressions": [
+			{
+				"Name": "AD",
+				"File": "AD.exp3.json"
+			}
+		]
+	},
+	"Groups": [
+		{
+			"Target": "Parameter",
+			"Name": "EyeBlink",
+			"Ids": []
+		},
+		{
+			"Target": "Parameter",
+			"Name": "LipSync",
+			"Ids": []
+		}
+	]
+}

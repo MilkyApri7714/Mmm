@@ -1,0 +1,80 @@
+## Plan tổng quan — Live wallpaper chibi trợ lý AI (bản hoàn thiện)
+
+**Mục tiêu**: Live wallpaper Android cá nhân, nhân vật AI có 3 dạng model chuyển đổi tuỳ tình huống, tương tác qua chạm + giọng nói, xử lý bằng Gemini.
+
+**Ngăn xếp công nghệ**: Kotlin, Cubism SDK for Java (render qua OpenGL), `SpeechRecognizer` có sẵn của Android, Gemini API (chat thường + function calling), video phát on-demand qua `MediaPlayer`/`SurfaceTexture` chung 1 context OpenGL.
+
+**Ba dạng nhân vật** (3 model Live2D riêng biệt, dùng chung 1 engine render):
+1. **Slime** — độ cơ động cao nhất, dùng khi nhân vật cần *di chuyển tự do* trên màn hình (đi tới đi lui, nhảy tưng tưng). Đây là "dạng mặc định" lúc rảnh rỗi.
+2. **Chibi** — độ cơ động thấp, đứng cố định 1 chỗ, dùng khi *trò chuyện* với user — hiện kèm bong bóng chat hiển thị câu trả lời/câu hỏi.
+3. **Full** — đứng yên, gần như phủ toàn màn hình, dùng khi cần *thể hiện biểu cảm mạnh* (vui/buồn/ngạc nhiên...) — kiểu "cận cảnh" nhân vật.
+
+**Luồng tương tác**:
+- Mặc định: **Slime** tự do di chuyển ngẫu nhiên trên màn hình.
+- **Chạm đúp (double-tap)** vào nhân vật → bắt đầu ghi âm STT. Sau 3 giây không nhận thêm giọng nói → tự ngắt ghi âm, gửi văn bản đã nhận dạng lên Gemini.
+- Trong lúc chờ Gemini phản hồi: chuyển sang **Chibi**, hiện bong bóng chat báo đang xử lý (tránh cảm giác đứng hình).
+- Gemini trả về: nếu là **câu trả lời trò chuyện thường** → hiện trong bong bóng chat, nhân vật giữ dạng **Chibi**. Nếu là **function calling** (JSON chỉ định action) → tuỳ action mà chuyển sang **Full** (biểu cảm mạnh) hoặc phát video, hoặc quay lại **Slime** (nếu action là lệnh di chuyển).
+- Xử lý xong → quay lại **Slime**, tiếp tục di chuyển tự do.
+
+**Kiến trúc tổng thể** (không đổi so với bản trước, chỉ mở rộng tầng model và state machine):
+1. `WallpaperService` + `Engine` — vòng đời sống trên home screen
+2. Renderer OpenGL — vẽ 1 trong 3 model (Slime/Chibi/Full) tuỳ trạng thái, video nền khi cần, hiệu ứng — chung 1 context GL
+3. State machine mở rộng: `Roaming (Slime)` → `Listening (STT)` → `Thinking (chờ Gemini, hiện Chibi)` → `Talking (Chibi + bong bóng chat)` / `Expressing (Full)` / `PlayingVideo` → quay lại `Roaming`
+4. AI Brain — SpeechRecognizer → Gemini (chat thường + function calling) → route theo loại phản hồi
+5. `MainActivity` + UI thật — lớp giao diện có icon thật ngoài home screen, KHÔNG dựa vào Cài đặt > Hình nền của máy (máy hiện tại không có mục cho live wallpaper bên thứ 3 trong Settings), tự gọi thẳng Intent đặt wallpaper trong app; đồng thời là nơi duy nhất xin được quyền runtime (RECORD_AUDIO) và nhập/lưu Gemini API key — `WallpaperService` không tự làm được 2 việc này.
+
+**Lộ trình 8 giai đoạn** (cập nhật):
+
+1. **Nền tảng WallpaperService** — wallpaper tĩnh Canvas, cài thử lên máy, hiểu vòng đời Engine.
+2. **Chuyển sang OpenGL** — tự dựng EGL context, vẽ thử hình đơn giản xác nhận pipeline.
+3. **Tích hợp Cubism SDK for Java + cả 3 model** — load Slime, Chibi (Haruto), Full lần lượt, hiện từng cái đứng yên trước, chưa cần logic chuyển đổi.
+4. **Input & state machine cơ bản** — nhận diện chạm đơn/chạm đúp, dựng khung state machine 6 trạng thái (Roaming/Listening/Thinking/Talking/Expressing/PlayingVideo) nhưng nội dung mỗi trạng thái để tạm placeholder.
+5. **Slime roaming** — logic toạ độ (x,y) di chuyển ngẫu nhiên + code set tham số nảy, đây chính là trạng thái mặc định.
+6. **Giọng nói & Gemini** — chạm đúp → STT → cắt sau 3 giây im lặng → gửi Gemini, xử lý cả 2 loại phản hồi (chat thường / function calling), route sang Chibi/Full/Slime tương ứng.
+7. **Bong bóng chat & biểu cảm** — UI bong bóng chat đè lên Chibi, danh sách animation/video ứng với từng action của Full.
+8. **Polish & tối ưu** — tắt render/decode khi không hiển thị, particle effect, chốt có làm AccessibilityService hay không.
+9. **MainActivity — giao diện thật** — màn hình có icon riêng ngoài home screen (không còn app "vô hình" chỉ nằm trong Settings); nút "Đặt làm hình nền động" gọi thẳng `Intent(WallpaperManager.ACTION_CHANGE_LIVE_WALLPAPER)` kèm `EXTRA_LIVE_WALLPAPER_COMPONENT` trỏ tới `ChibiWallpaperService` (bắt buộc phải làm theo cách này vì máy hiện tại không có mục chọn live wallpaper bên thứ 3 trong Cài đặt > Hình nền — không thể chỉ trông cậy vào đường Settings như Phần 1 mô tả); ô nhập + lưu Gemini API key (`SharedPreferences`, không hardcode trong code); xin quyền `RECORD_AUDIO` runtime — phải xong trước Giai đoạn 6 vì `WallpaperService` không tự request permission được.
+(Ghi chú: 3 dạng model, chạm đúp + 3 giây STT, dùng Kotlin + Cubism SDK for Java, danh sách asset đã có...)
+
+**5 phần đã chia từ 8 giai đoạn gốc, cộng thêm Phần 6 mới** (khớp với các README_PHAN_*.md trong project):
+1. **Phần 1**: Giai đoạn 1 — WallpaperService nền tảng, Canvas tĩnh.
+2. **Phần 2**: Giai đoạn 2 + 3 — OpenGL/EGL context, tích hợp Cubism SDK, load 3 model. (Giai đoạn 3 tự chia nhỏ thêm 3.1 → 3.5.)
+3. **Phần 3**: Giai đoạn 4 + 5 — Input/double-tap, state machine 6 trạng thái, Slime roaming.
+4. **Phần 4**: Giai đoạn 6 — SpeechRecognizer, GeminiClient, route chat thường/function calling.
+5. **Phần 5**: Giai đoạn 7 + 8 — Bong bóng chat, ActionRouter cho video/biểu cảm, polish & tối ưu pin.
+6. **Phần 6 (mới)**: Giai đoạn 9 — `MainActivity` + UI thật (icon ngoài home screen, nút đặt wallpaper trực tiếp qua Intent, nhập API key, xin quyền micro). Nên làm **trước Phần 4** (không bắt buộc phải xong hết Phần 3 mới bắt đầu) vì Phần 4 cần quyền `RECORD_AUDIO` mà chỉ Activity mới xin được.
+7. **Phần 7 (mới, ngoài 9 giai đoạn gốc)** — Hiệu ứng "cổng không gian" khi đổi model, thay cho cắt cứng (instant swap) đã dùng từ Phần 4 tới giờ: 1 dải cổng kéo từ đỉnh màn hình xuống nuốt model cũ, đổi model lúc cổng phủ kín, rồi cổng rút từ dưới lên lộ model mới. Chia làm 2:
+   - **7.1**: cơ chế cổng dùng chung + áp dụng cho Slime ⟷ Chibi (2 model nhỏ, chuyển qua lại thoải mái). ĐÃ LÀM — xem `README_PHAN_7_1.md`.
+   - **7.2**: hiệu ứng riêng cho Full — cổng to kéo tới chân làm Full biến mất, rồi 1 cổng nhỏ (vị trí RANDOM mỗi lần trong 3 vị trí trái/giữa/phải, đã chốt với user) ở phía dưới màn hình hiện model nhỏ (Chibi/Slime) chui ra; chiều ngược lại (nhỏ → Full) dùng cổng nhỏ co lại nuốt model nhỏ rồi cổng to mở ra từ trên xuống lộ Full. ĐÃ LÀM — xem `README_PHAN_7_2.md`.
+
+cấu trúc dự kiến:
+
+app/
+├── build.gradle.kts
+├── src/main/
+│   ├── AndroidManifest.xml
+│   ├── res/
+│   │   ├── xml/wallpaper.xml          ← khai báo bắt buộc để Android nhận đây là live wallpaper
+│   │   ├── values/strings.xml
+│   │   ├── layout/activity_main.xml   ← giao diện MainActivity (giai đoạn 9 / Phần 6)
+│   │   └── drawable/                  ← icon app
+│   ├── assets/
+│   │   ├── slime/                     ← Stargazer_Vts (moc3, model3.json, texture, physics3)
+│   │   ├── chibi/                     ← haruto.moc3 + 10 motion + texture
+│   │   ├── full/                      ← model dạng "full" (chưa có, làm sau)
+│   │   └── videos/                    ← clip cho function calling
+│   └── java/.../
+│       ├── ChibiWallpaperService.kt   ← WallpaperService + Engine (giai đoạn 1)
+│       ├── ui/
+│       │   └── MainActivity.kt        ← icon thật, đặt wallpaper qua Intent, nhập API key, xin quyền mic (giai đoạn 9)
+│       ├── render/
+│       │   ├── GLRenderer.kt          ← EGL context, vòng lặp vẽ (giai đoạn 2)
+│       │   └── VideoLayer.kt          ← SurfaceTexture video (giai đoạn 7)
+│       ├── character/
+│       │   ├── CharacterStateMachine.kt  ← Roaming/Listening/Thinking/... (giai đoạn 4)
+│       │   ├── SlimeController.kt        ← logic nảy + toạ độ (giai đoạn 5)
+│       │   └── CubismModelWrapper.kt     ← load chung cho cả 3 model (giai đoạn 3)
+│       └── ai/
+│           ├── SpeechToTextManager.kt    ← SpeechRecognizer + đếm 3 giây (giai đoạn 6)
+│           ├── GeminiClient.kt           ← gọi API, function calling
+│           └── ActionRouter.kt           ← map JSON action → model/video tương ứng
