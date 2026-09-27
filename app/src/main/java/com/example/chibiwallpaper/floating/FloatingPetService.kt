@@ -123,6 +123,7 @@ class FloatingPetService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        com.example.chibiwallpaper.CrashLogger.install(this)
         gemini = GeminiClient(applicationContext)
         actionRouter = ActionRouter(applicationContext)
         geminiTtsHelper = GeminiTtsHelper(applicationContext)
