@@ -7,7 +7,6 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.graphics.PixelFormat
-import android.opengl.GLSurfaceView
 import android.os.Build
 import android.os.Handler
 import android.os.IBinder
@@ -20,6 +19,8 @@ import android.util.Log
 import android.view.GestureDetector
 import android.view.Gravity
 import android.view.MotionEvent
+import android.view.SurfaceHolder
+import android.view.SurfaceView
 import android.view.View
 import android.view.WindowManager
 import androidx.core.app.NotificationCompat
@@ -34,6 +35,7 @@ import com.example.chibiwallpaper.ai.RoutedAction
 import com.example.chibiwallpaper.ai.SpeechToTextManager
 import com.example.chibiwallpaper.ai.TtsHelper
 import com.example.chibiwallpaper.render.ChatBubbleOverlay
+import com.example.chibiwallpaper.render.GLRenderer
 import com.example.chibiwallpaper.ui.MainActivity
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -78,8 +80,16 @@ import kotlin.math.abs
 class FloatingPetService : Service() {
 
     private lateinit var windowManager: WindowManager
-    private var petView: GLSurfaceView? = null
+    private var petView: SurfaceView? = null
     private var renderer: FloatingPetRenderer? = null
+    // BUG 2 (FIX) — Thay `GLSurfaceView` bằng [SurfaceView] thường + [GLRenderer] (EGL tự quản lý,
+    // y hệt cách ChibiWallpaperService dùng cho Live Wallpaper — xem javadoc GLRenderer). Trước
+    // đây mỗi lần tắt nhân vật nổi hoặc đổi model (removeOverlayView(); addOverlayView()) đều tạo
+    // 1 GLSurfaceView MỚI, và nội bộ EglHelper.finish() của nó tự gọi eglTerminate(display) — KHÔNG
+    // có API public nào chặn được — phá luôn context share chung với Wallpaper (đang dùng cùng
+    // display qua CubismGlShare). GLRenderer tự quản lý EGL nên CHỈ eglTerminate() khi chắc chắn
+    // không còn owner GL nào khác (Wallpaper lẫn Nhân vật nổi) — xem CubismGlShare.beforeDestroyContext().
+    private var glRenderer: GLRenderer? = null
     private lateinit var layoutParams: WindowManager.LayoutParams
 
     private var modelType: String = MODEL_SLIME
@@ -103,6 +113,19 @@ class FloatingPetService : Service() {
     // PHẦN 15.5 — Revert timer (để skip bubble sớm khi single-tap)
     private var pendingRevertRunnable: Runnable? = null
 
+    // PHẦN 22/25 — Nhớ lại vị trí + kích thước nổi (trước khi vào chế độ trả lời) để khôi phục
+    // sau khi xong. Khi Milky chuyển sang Chibi để trả lời, cửa sổ nổi tự dời ra GIỮA MÀN HÌNH
+    // (thay vì đứng yên ở góc mà user thả trước đó) VÀ PHÓNG TO (từ 130dp lên [REPLY_SIZE_DP]) —
+    // cửa sổ nhỏ 130dp trước đây quá bé để thấy trọn nhân vật + bong bóng chat (bong bóng tự build
+    // rộng tới 260dp — xem FloatingPetRenderer.buildBubbleBitmap — NHƯNG bị viewport 130dp cắt mất
+    // phần lớn, chỉ thấy 1 góc chữ) — rồi tự dời + THU NHỎ VỀ ĐÚNG chỗ/kích thước cũ khi về
+    // ROAMING (clearBubbleAndRevert).
+    private var savedOverlayX = 0
+    private var savedOverlayY = 0
+    private var savedOverlayWidth = 0
+    private var savedOverlayHeight = 0
+    private var isCenteredForReply = false
+
     // PHẦN 16 — Theo dõi app foreground để ẩn/hiện
     private var foregroundWatcher: ForegroundAppWatcher? = null
 
@@ -123,7 +146,6 @@ class FloatingPetService : Service() {
 
     override fun onCreate() {
         super.onCreate()
-        com.example.chibiwallpaper.CrashLogger.install(this)
         gemini = GeminiClient(applicationContext)
         actionRouter = ActionRouter(applicationContext)
         geminiTtsHelper = GeminiTtsHelper(applicationContext)
@@ -189,11 +211,14 @@ class FloatingPetService : Service() {
 
                 // PHẦN 16 — Im lặng giữa lượt trong bilingual là bình thường → nghe lại ngay
                 if (bilingualTargetLang.isNotEmpty()) {
-                    mainHandler.post { stt?.startListening() }
+                    mainHandler.post { stt?.startListening(SpeechToTextManager.BILINGUAL_SILENCE_TIMEOUT_MS) }
                     return@SpeechToTextManager
                 }
 
                 if (code == SpeechRecognizer.ERROR_SPEECH_TIMEOUT || code == SpeechRecognizer.ERROR_NO_MATCH) {
+                    // PHẦN 26 (fix) — dời + phóng to cửa sổ trước khi hiện bubble, nếu không thoại
+                    // này sẽ bị cắt mất vì cửa sổ vẫn còn bé xíu (130dp) lúc đang ROAMING.
+                    centerOverlayForReply()
                     renderer?.showBubble("Milky không nghe rõ~ Thử lại nhé!")
                     scheduleRevert(3000L)
                 }
@@ -207,7 +232,7 @@ class FloatingPetService : Service() {
 
     private fun askGemini(userText: String) {
         ProactiveManager.notifyInteraction(applicationContext) // PHẦN 11 — reset đồng hồ inactivity
-        renderer?.showThinking()
+        enterReplyPresentation()
         scope.launch {
             val response = gemini.sendMessage(userText)
             when (response) {
@@ -232,7 +257,7 @@ class FloatingPetService : Service() {
             }
 
             is RoutedAction.StartRoaming -> {
-                renderer?.clearBubbleAndRevert()
+                exitReplyPresentation()
             }
 
             is RoutedAction.PlayVideo -> {
@@ -244,6 +269,13 @@ class FloatingPetService : Service() {
             // PHẦN 16 — Hội thoại song phương
             is RoutedAction.StartBilingualMode -> startBilingualMode(action.targetLanguage)
             is RoutedAction.StopBilingualMode  -> stopBilingualMode()
+
+            // PHẦN 26 — "Hỏi bằng ảnh" qua giọng nói, không cần quad-tap nữa. Trả cửa sổ về đúng
+            // chỗ/kích thước cũ trước khi mở activity (giống StartRoaming) rồi mới mở camera.
+            is RoutedAction.OpenPhotoAsk -> {
+                exitReplyPresentation()
+                openPhotoAskActivity()
+            }
         }
     }
 
@@ -252,9 +284,13 @@ class FloatingPetService : Service() {
     private fun respondWithText(text: String) {
         cancelPendingRevert()
         if (ChatBubbleOverlay.isLongText(text)) {
-            renderer?.clearBubbleAndRevert()
+            exitReplyPresentation()
             textBoard?.show(text) { /* đã về BASE từ đầu */ }
         } else {
+            // centerOverlayForReply() tự bỏ qua nếu askGemini() đã dời cửa sổ ra giữa màn hình từ
+            // bước showThinking() rồi — nhưng vẫn cần gọi ở đây cho đường đi KHÔNG qua askGemini
+            // (lời chủ động — xem showProactiveBubble), nơi respondWithText() là bước đầu tiên.
+            centerOverlayForReply()
             renderer?.showReply(text)
             scheduleRevert(revertDelay(text))
         }
@@ -265,7 +301,7 @@ class FloatingPetService : Service() {
 
     private fun scheduleRevert(delayMs: Long) {
         cancelPendingRevert()
-        val r = Runnable { pendingRevertRunnable = null; renderer?.clearBubbleAndRevert() }
+        val r = Runnable { pendingRevertRunnable = null; exitReplyPresentation() }
         pendingRevertRunnable = r
         mainHandler.postDelayed(r, delayMs)
     }
@@ -277,7 +313,7 @@ class FloatingPetService : Service() {
 
     private fun skipReplyBubble() {
         cancelPendingRevert()
-        renderer?.clearBubbleAndRevert()
+        exitReplyPresentation()
     }
 
     // ── PHẦN 21 — Chế độ trò chuyện (Gemini TTS) ────────────────────────────
@@ -295,10 +331,15 @@ class FloatingPetService : Service() {
     private fun startBilingualMode(targetLanguage: String) {
         bilingualTargetLang = targetLanguage.ifBlank { DEFAULT_BILINGUAL_TARGET_LANG }
         Log.d(TAG, "Bật hội thoại song phương — target=$bilingualTargetLang")
+        // PHẦN 26 (fix) — dời + phóng to cửa sổ TRƯỚC KHI hiện bubble, và giữ nguyên vậy suốt lúc
+        // dịch (không revert) — mọi bubble phụ đề trong handleBilingualUtterance() dựa vào cửa sổ
+        // đã ở trạng thái phóng to này. stopBilingualMode() sẽ trả cửa sổ về đúng chỗ/kích thước
+        // cũ qua scheduleRevert() → exitReplyPresentation() → restoreOverlayPosition().
+        centerOverlayForReply()
         renderer?.showBubble("Đang bật chế độ dịch~ Nói đi!")
         mainHandler.postDelayed({
             renderer?.clearBubbleAndRevert()
-            mainHandler.post { stt?.startListening() }
+            mainHandler.post { stt?.startListening(SpeechToTextManager.BILINGUAL_SILENCE_TIMEOUT_MS) }
         }, 1500L)
     }
 
@@ -317,7 +358,7 @@ class FloatingPetService : Service() {
 
             if (result == null) {
                 renderer?.showBubble("Dịch bị lỗi mạng, đang nghe tiếp~")
-                mainHandler.post { stt?.startListening() }
+                mainHandler.post { stt?.startListening(SpeechToTextManager.BILINGUAL_SILENCE_TIMEOUT_MS) }
                 return@launch
             }
 
@@ -326,7 +367,7 @@ class FloatingPetService : Service() {
             ttsHelper.speak(result.translatedText, result.targetLang) {
                 mainHandler.post {
                     if (bilingualTargetLang.isNotEmpty()) {
-                        stt?.startListening()
+                        stt?.startListening(SpeechToTextManager.BILINGUAL_SILENCE_TIMEOUT_MS)
                     }
                 }
             }
@@ -397,19 +438,39 @@ class FloatingPetService : Service() {
         val newRenderer = FloatingPetRenderer(applicationContext, modelType)
         renderer = newRenderer
 
-        val view = GLSurfaceView(this).apply {
-            setEGLContextClientVersion(2)
-            setEGLConfigChooser(8, 8, 8, 8, 16, 0)
+        // BUG 2 (FIX) — GLRenderer (EGL tự quản lý, dùng chung [CubismGlShare] với Wallpaper) thay
+        // cho GLSurfaceView; nền trong suốt (clearColor alpha=0) để thấy app phía dưới, y hệt
+        // GLES20.glClearColor(0f,0f,0f,0f) cũ trong FloatingPetRenderer.onSurfaceCreated().
+        val newGlRenderer = GLRenderer(
+            scene = newRenderer,
+            targetFps = 30,
+            clearColor = floatArrayOf(0f, 0f, 0f, 0f)
+        )
+        glRenderer = newGlRenderer
+
+        val view = SurfaceView(this).apply {
             holder.setFormat(PixelFormat.TRANSLUCENT)
             setZOrderOnTop(true)
-            setRenderer(newRenderer)
-            renderMode = GLSurfaceView.RENDERMODE_CONTINUOUSLY
+            holder.addCallback(object : SurfaceHolder.Callback {
+                override fun surfaceCreated(holder: SurfaceHolder) {
+                    newGlRenderer.surfaceCreated(holder.surface)
+                }
+                override fun surfaceChanged(holder: SurfaceHolder, format: Int, w: Int, h: Int) {
+                    newGlRenderer.surfaceChanged(w, h)
+                }
+                override fun surfaceDestroyed(holder: SurfaceHolder) {
+                    newGlRenderer.surfaceDestroyed()
+                }
+            })
         }
         attachTouchHandler(view)
         petView = view
 
         try {
             windowManager.addView(view, layoutParams)
+            // Không có callback onVisibilityChanged() như WallpaperService.Engine ở đây — phải tự
+            // báo GLRenderer "đang hiển thị" để nó bắt đầu vòng lặp vẽ (xem GLRenderer.setVisible).
+            newGlRenderer.setVisible(true)
             startForegroundWatcherIfPermitted()
         } catch (e: Exception) { Log.e(TAG, "addView lỗi: ${e.message}"); stopSelf() }
     }
@@ -418,9 +479,16 @@ class FloatingPetService : Service() {
         foregroundWatcher?.stop()
         foregroundWatcher = null
         petView?.let { v ->
-            renderer?.let { r -> v.queueEvent { r.release() } }
             try { windowManager.removeView(v) } catch (e: Exception) { Log.w(TAG, "removeView: ${e.message}") }
         }
+        // BUG 2 (FIX) — Gọi tường minh thay vì dựa vào SurfaceHolder.Callback.surfaceDestroyed()
+        // (removeView() không đảm bảo luôn kích hoạt nó kịp lúc): surfaceDestroyed() chỉ huỷ
+        // EGLSurface (an toàn gọi lại nhiều lần); release() mới thật sự huỷ EGLContext — và CHỈ
+        // eglTerminate() display dùng chung nếu mình là owner GL CUỐI CÙNG của tiến trình (xem
+        // GLRenderer.teardownEgl() + CubismGlShare) — không còn phá context của Wallpaper nữa.
+        glRenderer?.surfaceDestroyed()
+        glRenderer?.release()
+        glRenderer = null
         petView = null
         renderer = null
         textBoard?.dismiss()
@@ -433,12 +501,74 @@ class FloatingPetService : Service() {
         }.also { it.start() }
     }
 
+    // PHẦN 22/25 — Dời + phóng to cửa sổ nổi ra giữa màn hình lúc bắt đầu trả lời (Chibi), và trả
+    // lại đúng vị trí + kích thước cũ lúc về ROAMING. Bọc quanh renderer.showThinking()/
+    // clearBubbleAndRevert() thay vì gọi thẳng, để KHÔNG có chỗ nào quên dời/khôi phục (xem các
+    // call site đã đổi bên dưới).
+    /** Chỉ phần dời + phóng to cửa sổ — KHÔNG đụng renderer. Gọi lại nhiều lần vô hại (tự bỏ qua nếu đã ở giữa). */
+    private fun centerOverlayForReply() {
+        if (isCenteredForReply) return
+        val lp = layoutParams
+        savedOverlayX = lp.x
+        savedOverlayY = lp.y
+        // PHẦN 25 — Lưu luôn kích thước GỐC (130dp) để khôi phục đúng — trước đây chỉ lưu x/y,
+        // cửa sổ vẫn giữ nguyên 130dp bé xíu suốt lúc trả lời nên bong bóng chat (build rộng tới
+        // 260dp — xem FloatingPetRenderer.buildBubbleBitmap) bị viewport cắt mất, chỉ thấy 1 góc.
+        savedOverlayWidth = lp.width
+        savedOverlayHeight = lp.height
+        val dp = resources.displayMetrics.density
+        val screenW = resources.displayMetrics.widthPixels
+        val screenH = resources.displayMetrics.heightPixels
+        val replyW = (REPLY_SIZE_W_DP * dp).toInt()
+        val replyH = (REPLY_SIZE_H_DP * dp).toInt()
+        lp.width = replyW
+        lp.height = replyH
+        lp.x = (screenW - replyW) / 2
+        lp.y = (screenH - replyH) / 2
+        isCenteredForReply = true
+        petView?.let { v ->
+            try { windowManager.updateViewLayout(v, lp) } catch (e: Exception) {
+                Log.w(TAG, "updateViewLayout(center): ${e.message}")
+            }
+        }
+    }
+
+    /** Chỉ phần trả cửa sổ về vị trí + kích thước cũ — KHÔNG đụng renderer. Vô hại nếu chưa từng dời. */
+    private fun restoreOverlayPosition() {
+        if (!isCenteredForReply) return
+        val lp = layoutParams
+        lp.x = savedOverlayX
+        lp.y = savedOverlayY
+        lp.width = savedOverlayWidth
+        lp.height = savedOverlayHeight
+        isCenteredForReply = false
+        petView?.let { v ->
+            try { windowManager.updateViewLayout(v, lp) } catch (e: Exception) {
+                Log.w(TAG, "updateViewLayout(restore): ${e.message}")
+            }
+        }
+    }
+
+    private fun enterReplyPresentation() {
+        renderer?.showThinking()
+        centerOverlayForReply()
+    }
+
+    private fun exitReplyPresentation() {
+        renderer?.clearBubbleAndRevert()
+        restoreOverlayPosition()
+    }
+
     private fun applyForegroundVisibility(shouldShow: Boolean) {
         val view = petView ?: return
+        // BUG 2 (FIX) — glRenderer.setVisible() thay cho view.onPause()/onResume() của
+        // GLSurfaceView: chỉ dừng/khởi động lại vòng lặp vẽ (Choreographer), KHÔNG đụng tới
+        // EGLContext — đúng tinh thần "preserveEGLContextOnPause=true" cũ, không tạo/huỷ context
+        // lặp lại mỗi lần đổi app foreground.
         if (shouldShow) {
-            if (view.visibility != View.VISIBLE) { view.visibility = View.VISIBLE; view.onResume() }
+            if (view.visibility != View.VISIBLE) { view.visibility = View.VISIBLE; glRenderer?.setVisible(true) }
         } else {
-            if (view.visibility == View.VISIBLE) { view.visibility = View.GONE; view.onPause() }
+            if (view.visibility == View.VISIBLE) { view.visibility = View.GONE; glRenderer?.setVisible(false) }
         }
     }
 
@@ -600,6 +730,11 @@ class FloatingPetService : Service() {
         if (r.isBusy || r.isListening || r.isReplying || r.isTransitioning) return
         if (bilingualTargetLang.isNotEmpty()) return
         Log.d(TAG, "Quad-tap — mở PhotoAskActivity")
+        openPhotoAskActivity()
+    }
+
+    /** PHẦN 26 — Tách riêng để dùng chung giữa quad-tap (PHẦN 12) và function call open_photo_ask. */
+    private fun openPhotoAskActivity() {
         try {
             val intent = Intent(applicationContext,
                 com.example.chibiwallpaper.ui.PhotoAskActivity::class.java).apply {
@@ -622,6 +757,8 @@ class FloatingPetService : Service() {
             vibrateOnce()
             mainHandler.post { stt?.startListening() }
         } else {
+            // PHẦN 26 (fix) — cùng lý do: dời + phóng to trước khi hiện bubble cảnh báo thiếu quyền.
+            centerOverlayForReply()
             r.showBubble("Cần quyền micro~ Vào app cấp nhé!")
             scheduleRevert(3000L)
         }
@@ -671,6 +808,11 @@ class FloatingPetService : Service() {
         private const val CHANNEL_ID      = "floating_pet_channel"
         private const val NOTIFICATION_ID = 1042
         private const val PET_SIZE_DP     = 130
+        // PHẦN 25 — Kích thước cửa sổ nổi lúc Chibi TRẢ LỜI (giữa màn hình) — đủ rộng để bong
+        // bóng chat (build tới 260dp — xem FloatingPetRenderer.buildBubbleBitmap) không bị cắt,
+        // và đủ cao để thấy trọn nhân vật bên dưới bong bóng.
+        private const val REPLY_SIZE_W_DP = 300
+        private const val REPLY_SIZE_H_DP = 280
 
         // Touch constants (PHẦN 13)
         private const val LONG_PRESS_MS        = 320L

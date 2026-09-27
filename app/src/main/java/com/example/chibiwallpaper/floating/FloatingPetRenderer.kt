@@ -7,7 +7,6 @@ import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.RectF
 import android.opengl.GLES20
-import android.opengl.GLSurfaceView
 import android.text.Layout
 import android.text.StaticLayout
 import android.text.TextPaint
@@ -16,10 +15,9 @@ import com.example.chibiwallpaper.character.CubismModelWrapper
 import com.example.chibiwallpaper.cubism.CubismBoot
 import com.example.chibiwallpaper.render.ActiveModel
 import com.example.chibiwallpaper.render.FullPortalOverlay
+import com.example.chibiwallpaper.render.GLScene
 import com.example.chibiwallpaper.render.OverlayTextureRenderer
 import com.example.chibiwallpaper.render.PortalTransitionOverlay
-import javax.microedition.khronos.egl.EGLConfig
-import javax.microedition.khronos.opengles.GL10
 
 /**
  * PHẦN 14 — Renderer cho floating overlay, tích hợp:
@@ -42,11 +40,18 @@ import javax.microedition.khronos.opengles.GL10
  *
  * Tất cả GLES20.* và CubismModelWrapper chỉ được gọi từ GL thread.
  * State flag (isListening, isBusy) đọc từ main thread → @Volatile.
+ *
+ * BUG 2 (FIX) — Implement [GLScene] (giống hệt [com.example.chibiwallpaper.render.MultiModelScene]
+ * của Wallpaper) thay vì `GLSurfaceView.Renderer`. Renderer này giờ được
+ * [com.example.chibiwallpaper.render.GLRenderer] (EGL tự quản lý, xem javadoc ở đó) chạy, KHÔNG
+ * còn dùng `android.opengl.GLSurfaceView` nữa — xem [FloatingPetService] để biết lý do: bản thân
+ * GLSurfaceView tự gọi `eglTerminate()` lúc view bị gỡ khỏi WindowManager (tắt/đổi model nhân vật
+ * nổi), không có cách nào chặn từ bên ngoài, phá luôn context share chung với Wallpaper.
  */
 class FloatingPetRenderer(
     private val appContext: Context,
     private val modelType: String = FloatingPetService.MODEL_SLIME
-) : GLSurfaceView.Renderer {
+) : GLScene {
 
     // ── State flags (đọc từ main thread) ────────────────────────────────────
     @Volatile var isListening: Boolean = false
@@ -62,7 +67,6 @@ class FloatingPetRenderer(
 
     private var width = 1
     private var height = 1
-    private var lastFrameNanos = 0L
 
     // ── Bubble text ──────────────────────────────────────────────────────────
     @Volatile private var pendingBubbleText: String? = null
@@ -193,11 +197,10 @@ class FloatingPetRenderer(
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // GLSurfaceView.Renderer
+    // GLScene
     // ─────────────────────────────────────────────────────────────────────────
 
-    override fun onSurfaceCreated(gl: GL10?, config: EGLConfig?) {
-        GLES20.glClearColor(0f, 0f, 0f, 0f)
+    override fun onContextCreated() {
         GLES20.glEnable(GLES20.GL_BLEND)
         GLES20.glBlendFunc(GLES20.GL_SRC_ALPHA, GLES20.GL_ONE_MINUS_SRC_ALPHA)
 
@@ -234,23 +237,25 @@ class FloatingPetRenderer(
             portalTransition.ensureInitialized(or)
             fullPortal.ensureInitialized()
         }
-        lastFrameNanos = System.nanoTime()
     }
 
-    override fun onSurfaceChanged(gl: GL10?, w: Int, h: Int) {
-        width = w; height = h
-        GLES20.glViewport(0, 0, w, h)
-        baseWrapper?.setRenderTargetSize(w, h)
-        chibiWrapper?.setRenderTargetSize(w, h)
-        fullWrapper?.setRenderTargetSize(w, h)
+    override fun onSurfaceChanged(width: Int, height: Int) {
+        this.width = width; this.height = height
+        // GLRenderer đã tự glViewport(0, 0, width, height) trước khi gọi hàm này.
+        baseWrapper?.setRenderTargetSize(width, height)
+        chibiWrapper?.setRenderTargetSize(width, height)
+        fullWrapper?.setRenderTargetSize(width, height)
     }
 
-    override fun onDrawFrame(gl: GL10?) {
-        val now = System.nanoTime()
-        val dt = ((now - lastFrameNanos) / 1_000_000_000f).coerceIn(0f, 0.1f)
-        lastFrameNanos = now
+    override fun onTouch(x: Float, y: Float) {
+        // Floating pet không dùng đường onTouch(x, y) của GLScene — FloatingPetService gọi thẳng
+        // onTap()/onSwipeUp() (không toạ độ) từ touch handler của nó, xem lớp đó.
+    }
 
-        GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT or GLES20.GL_DEPTH_BUFFER_BIT)
+    override fun onDrawFrame(deltaSeconds: Float) {
+        val dt = deltaSeconds
+        // GLRenderer đã glClear() (màu nền trong suốt, xem clearColor truyền vào lúc khởi tạo ở
+        // FloatingPetService) trước khi gọi hàm này.
 
         // Apply pending expression trên GL thread — áp lên đúng wrapper đang đại diện cho FULL
         // (fullWrapper phụ, hoặc baseWrapper nếu modelType chính là FULL).
@@ -302,7 +307,7 @@ class FloatingPetRenderer(
         }
     }
 
-    fun release() {
+    override fun onContextDestroyed(isLastCubismOwner: Boolean) {
         baseWrapper?.release();  baseWrapper  = null
         chibiWrapper?.release(); chibiWrapper = null
         fullWrapper?.release();  fullWrapper  = null
@@ -310,6 +315,18 @@ class FloatingPetRenderer(
         overlayRenderer?.let { or -> portalTransition.onContextDestroyed(or) }
         fullPortal.onContextDestroyed()
         overlayRenderer = null
+
+        // PHẦN 22 — Context của Nhân vật nổi CHIA SẺ CubismFramework/CubismShaderAndroid với
+        // context của ChibiWallpaperService (xem [com.example.chibiwallpaper.render.CubismGlShare]).
+        // BUG 2 (FIX) — [isLastCubismOwner] giờ do chính [com.example.chibiwallpaper.render.GLRenderer]
+        // tính sẵn (qua CubismGlShare.beforeDestroyContext(), gọi ĐÚNG 1 LẦN cho mỗi context bị
+        // huỷ) và truyền thẳng vào đây — KHÔNG tự gọi CubismGlShare.beforeDestroyContext() lần nữa
+        // ở tầng renderer nữa (trước đây gọi ở release(), giờ trùng với lần gọi trong GLRenderer.
+        // destroyEglContext() → đếm owner bị lệch). CHỈ dispose() thật khi mình là owner GL cuối
+        // cùng của tiến trình (wallpaper không còn sống) — nếu không sẽ xoá mất shader mà wallpaper
+        // đang cần. Hàm này được GLRenderer gọi trong khi context của mình VẪN còn current — bắt
+        // buộc để glDeleteProgram (bên trong dispose()) hợp lệ.
+        CubismBoot.disposeOnGlThread(isLastCubismOwner)
     }
 
     // ─────────────────────────────────────────────────────────────────────────

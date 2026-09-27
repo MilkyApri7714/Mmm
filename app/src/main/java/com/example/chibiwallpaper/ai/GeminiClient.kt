@@ -66,6 +66,7 @@ Bạn có thể gọi các function sau khi cần:
 - cancel_do_not_disturb: khi chủ nhân nói huỷ chế độ không làm phiền, muốn Milky lên tiếng lại bình thường.
 - start_bilingual_mode(target_language): khi chủ nhân nói "bật chế độ hội thoại song phương", "giúp mình dịch cuộc nói chuyện này", "phiên dịch giúp mình"... target_language để trống nếu không nói rõ ngôn ngữ đích.
 - stop_bilingual_mode: khi chủ nhân nói "tắt chế độ hội thoại song phương", "dừng phiên dịch", "ngừng dịch"...
+- open_photo_ask: khi chủ nhân muốn hỏi bằng hình ảnh, ví dụ "chụp ảnh giúp mình hỏi cái này", "mở camera đi", "cho mình hỏi bằng ảnh", "xem giúp mình cái này là gì" (mở camera để chụp rồi hỏi bằng giọng nói).
 
 Khi không cần function nào, chỉ trả lời text thông thường.
 
@@ -321,6 +322,14 @@ giấc...), không cần đọc lại nguyên văn khối này trừ khi chủ n
   {
     "name": "stop_bilingual_mode",
     "description": "Tắt chế độ hội thoại song phương, quay lại trò chuyện bình thường",
+    "parameters": {
+      "type": "OBJECT",
+      "properties": {}
+    }
+  },
+  {
+    "name": "open_photo_ask",
+    "description": "Mở camera để chụp ảnh rồi hỏi Milky bằng giọng nói về ảnh đó (multimodal), khi chủ nhân muốn 'chụp ảnh hỏi', 'hỏi bằng hình', 'mở camera đi', 'xem giúp mình cái này là gì'...",
     "parameters": {
       "type": "OBJECT",
       "properties": {}

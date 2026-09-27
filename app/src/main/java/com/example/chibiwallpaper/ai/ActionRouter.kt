@@ -209,6 +209,11 @@ class ActionRouter(private val appContext: Context) {
                 RoutedAction.StopBilingualMode
             }
 
+            // ── PHẦN 26 — "Hỏi bằng ảnh" qua function call thay vì quad-tap ──────
+            "open_photo_ask" -> {
+                RoutedAction.OpenPhotoAsk
+            }
+
             else -> {
                 Log.w(TAG, "Function chưa được xử lý: ${call.name}")
                 RoutedAction.SpeakText("Mình biết bạn muốn làm gì rồi nhưng tính năng đó đang được phát triển~")
@@ -431,6 +436,9 @@ sealed class RoutedAction {
 
     /** PHẦN 16 — Tắt chế độ hội thoại song phương. */
     object StopBilingualMode : RoutedAction()
+
+    /** PHẦN 26 — Mở PhotoAskActivity ("Hỏi bằng ảnh") — trước đây chỉ mở được qua quad-tap. */
+    object OpenPhotoAsk : RoutedAction()
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

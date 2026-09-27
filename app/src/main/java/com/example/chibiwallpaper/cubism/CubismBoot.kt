@@ -63,11 +63,25 @@ object CubismBoot {
         }
     }
 
-    /** Gọi TRÊN GL THREAD, bên trong onContextDestroyed() của scene, TRƯỚC khi context thật sự mất. */
-    fun disposeOnGlThread() {
+    /**
+     * Gọi TRÊN GL THREAD, bên trong onContextDestroyed() của scene, TRƯỚC khi context thật sự mất.
+     *
+     * PHẦN 22 — [isLastCubismOwner] PHẢI lấy từ
+     * [com.example.chibiwallpaper.render.CubismGlShare.beforeDestroyContext]: CubismFramework
+     * (và singleton shader nội bộ của nó) giờ được Wallpaper VÀ Nhân vật nổi DÙNG CHUNG (2 context
+     * chia sẻ nhau — xem [com.example.chibiwallpaper.render.CubismGlShare]). Nếu bên kia vẫn còn
+     * sống (isLastCubismOwner=false) mà mình cứ dispose() thật thì sẽ xoá luôn tài nguyên bên kia
+     * đang cần → vỡ hình/crash ngay khung hình kế tiếp của bên kia. CHỈ owner CUỐI CÙNG mới được
+     * dispose() thật.
+     */
+    fun disposeOnGlThread(isLastCubismOwner: Boolean) {
+        if (!isLastCubismOwner) {
+            Log.d(TAG, "disposeOnGlThread: còn owner GL khác đang dùng chung CubismFramework — bỏ qua dispose() thật")
+            return
+        }
         if (CubismFramework.isInitialized()) {
             CubismFramework.dispose()
-            Log.d(TAG, "CubismFramework.dispose() xong")
+            Log.d(TAG, "CubismFramework.dispose() xong (owner GL cuối cùng)")
         }
     }
 }

@@ -50,8 +50,13 @@ interface GLScene {
     /**
      * Context sắp bị huỷ (hoặc đã mất). Khi context bị huỷ, mọi tài nguyên GL (program, texture, buffer...)
      * tự được giải phóng — scene chỉ cần bỏ các handle đang giữ, KHÔNG cần gọi glDelete*.
+     *
+     * PHẦN 22 — [isLastCubismOwner]: true nếu KHÔNG còn owner GL nào khác (Nhân vật nổi) đang dùng
+     * chung CubismFramework — lấy từ [CubismGlShare.beforeDestroyContext]. Xem
+     * [com.example.chibiwallpaper.cubism.CubismBoot.disposeOnGlThread] để biết vì sao quan trọng.
+     * Mặc định true để không phá vỡ scene nào khác có thể implement interface này mà chưa cập nhật.
      */
-    fun onContextDestroyed()
+    fun onContextDestroyed(isLastCubismOwner: Boolean = true)
 
     /**
      * PHẦN 8 — true khi scene muốn [GLRenderer] hạ khung hình/giây xuống mức tiết kiệm pin.

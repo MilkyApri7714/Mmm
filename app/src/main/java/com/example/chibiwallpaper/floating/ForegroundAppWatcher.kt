@@ -5,23 +5,20 @@ import android.app.KeyguardManager
 import android.app.usage.UsageEvents
 import android.app.usage.UsageStatsManager
 import android.content.Context
-import android.content.Intent
-import android.content.pm.PackageManager
 import android.os.Handler
 import android.os.Looper
 import android.os.Process
 
 /**
- * PHẦN 16 — Tự ẩn nhân vật nổi khi ở Home/màn hình khoá, tự hiện lại khi vào [MainActivity] hoặc
- * bất kỳ app nào khác.
+ * PHẦN 16 — Tự ẩn nhân vật nổi khi khoá máy, tự hiện lại khi mở khoá (kể cả đang ở Home/launcher
+ * hay bất kỳ app nào khác — xem PHẦN 26 fix bên dưới).
  *
  * Không có API "onForegroundAppChanged" native mà không cần AccessibilityService/root, nên dùng
  * cách đơn giản: poll [UsageStatsManager.queryEvents] mỗi [POLL_INTERVAL_MS], lấy sự kiện
  * `MOVE_TO_FOREGROUND` cuối cùng trong cửa sổ [QUERY_WINDOW_MS] gần nhất để suy ra app đang mở.
  *
  * Giới hạn (chấp nhận được — xem plan Phần 16): polling không phân biệt được recents/1 số overlay
- * hệ thống khác với "app khác" — mọi trường hợp không phải launcher và không khoá máy đều coi là
- * "app khác" nên hiện nhân vật.
+ * hệ thống khác với "app khác".
  *
  * [onVisibilityShouldChange] chỉ được gọi khi giá trị THỰC SỰ đổi (không gọi lặp lại mỗi lần poll
  * nếu trạng thái không đổi) — luôn từ main thread (Handler dùng Looper.getMainLooper()).
@@ -35,13 +32,6 @@ class ForegroundAppWatcher(
         context.getSystemService(Context.USAGE_STATS_SERVICE) as UsageStatsManager
     private val keyguardManager =
         context.getSystemService(Context.KEYGUARD_SERVICE) as KeyguardManager
-
-    private val launcherPackageName: String? by lazy {
-        val intent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME)
-        context.packageManager
-            .resolveActivity(intent, PackageManager.MATCH_DEFAULT_ONLY)
-            ?.activityInfo?.packageName
-    }
 
     @Volatile private var lastShouldShow: Boolean? = null
     private var running = false
@@ -74,7 +64,12 @@ class ForegroundAppWatcher(
         // thái trước đó thay vì đoán bừa, tránh nhấp nháy ẩn/hiện liên tục.
         if (foregroundPackage == null && !locked) return
 
-        val shouldShow = !locked && foregroundPackage != null && foregroundPackage != launcherPackageName
+        // PHẦN 26 (fix) — TRƯỚC ĐÂY ẩn cả khi ở Home/launcher (foregroundPackage ==
+        // launcherPackageName), khiến GLSurfaceView bị set GONE ngay trên màn hình chính → view
+        // không còn nhận touch nữa, nên nhấn-giữ "trúng nhân vật" thực ra lọt xuống thẳng launcher
+        // bên dưới, kích hoạt menu "Đổi màn hình chính và màn hình khoá" của hệ thống. Giờ CHỈ ẩn
+        // khi máy khoá — nhân vật nổi vẫn hiện + nhận touch bình thường trên Home/launcher.
+        val shouldShow = !locked && foregroundPackage != null
         if (shouldShow != lastShouldShow) {
             lastShouldShow = shouldShow
             onVisibilityShouldChange(shouldShow)

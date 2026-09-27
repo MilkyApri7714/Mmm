@@ -57,10 +57,17 @@ class SleepIndicatorOverlay {
             else -> 1f
         }.coerceIn(0f, 1f)
         val wobble = sin(t * Math.PI.toFloat() * 3f) * 6f
+        // PHẦN 22 (fix) — BASE_OFFSET_PX cũ là số px CỐ ĐỊNH (70px), trong khi [anchorYPx] lại là
+        // tâm/thân Slime tính theo TỈ LỆ màn hình (xem MultiModelScene.slimeAnchorScreenPx — nhân
+        // với width/height thật của máy). Trên máy màn hình lớn/độ phân giải cao, 70px cố định
+        // không đủ để nhô lên KHỎI đầu Slime → "Z z z" bị vẽ đè lên/ngay dưới rìa Slime thay vì
+        // rõ ràng ở phía trên. Đổi baseOffset thành TỈ LỆ theo chiều cao màn hình (giống cách
+        // slimeAnchorScreenPx tính vị trí) để luôn nhô lên trên đầu Slime bất kể độ phân giải.
+        val baseOffsetPx = screenH * BASE_OFFSET_SCREEN_RATIO
         r.drawTexture(
             textureId, screenW, screenH,
             centerXPx = anchorXPx + wobble,
-            centerYPx = anchorYPx - BASE_OFFSET_PX - rise,
+            centerYPx = anchorYPx - baseOffsetPx - rise,
             widthPx = texWidthPx,
             heightPx = texHeightPx,
             alpha = alpha
@@ -88,6 +95,8 @@ class SleepIndicatorOverlay {
     companion object {
         private const val LOOP_DURATION = 2.4f // giây / vòng lặp trôi lên + mờ dần
         private const val RISE_PX = 60f
-        private const val BASE_OFFSET_PX = 70f // khoảng cách gốc phía trên đầu Slime
+        // PHẦN 22 (fix) — thay cho BASE_OFFSET_PX cố định 70f (không đủ nhô khỏi đầu Slime trên
+        // màn hình lớn) — xem giải thích ở [draw].
+        private const val BASE_OFFSET_SCREEN_RATIO = 0.12f
     }
 }

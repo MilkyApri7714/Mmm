@@ -292,10 +292,13 @@ class MultiModelScene(private val appContext: Context) : GLScene {
         }
     }
 
-    /** PHẦN 13 — Hit-test dùng chung: [x],[y] có nằm trong bán kính Slime (~11% cạnh ngắn) không. */
+    /** PHẦN 13 — Hit-test dùng chung: [x],[y] có nằm trong bán kính Slime (~11% cạnh ngắn) không.
+     *  PHẦN 26 (fix) — Lúc đang NGỦ, nới bán kính lên ~18% để chắc chắn đánh thức trúng trong 1 lần
+     *  chạm (Slime đứng yên ở góc màn hình, không cần bán kính nhỏ như lúc roaming — lúc đó bán
+     *  kính nhỏ để tránh nudge nhầm khi Slime đang di chuyển tự do giữa nhiều thứ trên màn hình). */
     private fun hitTestSlime(x: Float, y: Float): Boolean {
         val (slimePx, slimePy) = slimeAnchorScreenPx()
-        val hitRadius = minOf(width, height) * 0.11f
+        val hitRadius = minOf(width, height) * (if (slimeController.isSleeping) 0.18f else 0.11f)
         val dx = x - slimePx
         val dy = y - slimePy
         return (dx * dx + dy * dy) <= hitRadius * hitRadius
@@ -322,7 +325,7 @@ class MultiModelScene(private val appContext: Context) : GLScene {
         return hit
     }
 
-    override fun onContextDestroyed() {
+    override fun onContextDestroyed(isLastCubismOwner: Boolean) {
         slimeWrapper?.release(); slimeWrapper = null
         chibiWrapper?.release(); chibiWrapper = null
         fullWrapper?.release();  fullWrapper = null
@@ -334,7 +337,7 @@ class MultiModelScene(private val appContext: Context) : GLScene {
         videoLayer.onContextDestroyed()
         backgroundVideoLayer.onContextDestroyed()
         backgroundLayer.onContextDestroyed()
-        CubismBoot.disposeOnGlThread()
+        CubismBoot.disposeOnGlThread(isLastCubismOwner)
     }
 
     // ─────────────────────────────────────────────────────────────────────────

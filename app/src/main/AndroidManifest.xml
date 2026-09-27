@@ -23,6 +23,13 @@
     <!-- PHẦN 4: STT — bắt buộc để SpeechRecognizer ghi âm -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
 
+    <!-- PHẦN 23 (fix) — BẮT BUỘC để WallpaperManager.clear() không ném SecurityException.
+         Đây là quyền "normal" (tự cấp lúc cài app, không cần user duyệt), nhưng phải KHAI BÁO
+         trong manifest thì mới được cấp — thiếu dòng này là lý do nút gạt "Hình nền" ở
+         MainActivity (WallpaperSection) tắt không ăn: bấm tắt → clear() lỗi âm thầm (bị try/catch
+         nuốt) → hình nền Chibi không hề bị xoá → isActive không đổi → switch tự bật lại ngay. -->
+    <uses-permission android:name="android.permission.SET_WALLPAPER" />
+
     <!-- PHẦN 14 — Nhân vật nổi đè lên app khác: quyền đặc biệt, user cấp tay ở Settings
          (Settings.canDrawOverlays / ACTION_MANAGE_OVERLAY_PERMISSION), không xin runtime được. -->
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />

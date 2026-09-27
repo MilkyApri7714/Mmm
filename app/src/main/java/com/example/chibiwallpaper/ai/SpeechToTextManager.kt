@@ -13,18 +13,11 @@ import android.util.Log
 /**
  * PHẦN 4 — Quản lý STT bằng SpeechRecognizer có sẵn của Android.
  *
- * Luồng chính:
- *   [startListening] → SpeechRecognizer chạy → user nói.
- *   Sau [SILENCE_TIMEOUT_MS] không nhận thêm âm thanh → tự gọi [stopListening].
- *   Kết quả cuối cùng trả về qua [onResult]; lỗi/huỷ qua [onError].
- *
- * - Phải tạo trên MAIN thread (SpeechRecognizer yêu cầu).
- * - Chỉ gọi [startListening] khi đã có quyền RECORD_AUDIO.
- * - [release] phải được gọi khi WallpaperService bị destroy.
- *
- * Bộ đếm 3 giây im lặng chạy trên main-thread Handler:
- *   - Reset mỗi khi [onRmsChanged] phát hiện âm thanh đủ lớn (> [RMS_THRESHOLD]).
- *   - Hết giờ → stopListening() → [onResult] sẽ nhận kết quả partial cuối cùng.
+ * PHẦN 27 (fix) — SpeechRecognizer trên nhiều máy (Samsung/Xiaomi...) CRASH nếu stopListening()
+ * được gọi TRƯỚC KHI onReadyForSpeech() báo về (vd. nhấn-giữ rồi buông tay ngay, không nói gì —
+ * recognizer chưa kịp khởi động xong nội bộ). cancel() an toàn hơn để gọi bất kỳ lúc nào, kể cả
+ * trước khi sẵn sàng — stopListening() chỉ dùng khi ĐÃ chắc chắn recognizer đang thực sự lắng
+ * nghe (readyForSpeech = true). Mọi lệnh gọi recognizer đều bọc try/catch làm lớp bảo vệ cuối.
  */
 class SpeechToTextManager(
     private val context: Context,
@@ -39,10 +32,12 @@ class SpeechToTextManager(
 
     private var partialText = ""
     private var isListening = false
+    private var readyForSpeech = false
 
-    // Runnable đếm ngược 3 giây im lặng
+    private var activeSilenceTimeoutMs = SILENCE_TIMEOUT_MS
+
     private val silenceTimeoutRunnable = Runnable {
-        Log.d(TAG, "Hết 3s im lặng → tự ngắt ghi âm")
+        Log.d(TAG, "Hết ${activeSilenceTimeoutMs}ms im lặng → tự ngắt ghi âm")
         stopListening()
         val result = partialText.trim()
         if (result.isNotEmpty()) {
@@ -55,7 +50,8 @@ class SpeechToTextManager(
     companion object {
         private const val TAG = "ChibiSTT"
         private const val SILENCE_TIMEOUT_MS = 3_000L
-        private const val RMS_THRESHOLD = -1.5f  // dB, âm thanh đủ để coi là đang nói
+        const val BILINGUAL_SILENCE_TIMEOUT_MS = 1_500L
+        private const val RMS_THRESHOLD = -1.5f
     }
 
     /** Tạo SpeechRecognizer. Phải gọi trên main thread. */
@@ -70,11 +66,8 @@ class SpeechToTextManager(
         Log.d(TAG, "SpeechRecognizer khởi tạo xong")
     }
 
-    /**
-     * Bắt đầu nghe. Phải gọi trên main thread.
-     * Nếu đang nghe rồi thì không làm gì.
-     */
-    fun startListening() {
+    /** Bắt đầu nghe. Phải gọi trên main thread. */
+    fun startListening(silenceTimeoutMs: Long = SILENCE_TIMEOUT_MS) {
         if (isListening) return
         val r = recognizer ?: run {
             Log.w(TAG, "startListening() nhưng chưa init() — thử init lại")
@@ -84,14 +77,14 @@ class SpeechToTextManager(
 
         partialText = ""
         isListening = true
+        readyForSpeech = false
+        activeSilenceTimeoutMs = silenceTimeoutMs
 
         val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-            // Cho phép nhận nhiều ngôn ngữ — ưu tiên tiếng Việt nhưng fallback English
             putExtra(RecognizerIntent.EXTRA_LANGUAGE, "vi-VN")
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, "vi-VN")
             putExtra(RecognizerIntent.EXTRA_ONLY_RETURN_LANGUAGE_PREFERENCE, false)
-            // Tắt bộ phát hiện im lặng tích hợp (ta tự dùng bộ đếm 3s)
             putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 10_000L)
             putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 10_000L)
             putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 500L)
@@ -99,7 +92,13 @@ class SpeechToTextManager(
             putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
         }
 
-        r.startListening(intent)
+        try {
+            r.startListening(intent)
+        } catch (e: Exception) {
+            Log.e(TAG, "startListening lỗi: ${e.message}")
+            isListening = false
+            return
+        }
         resetSilenceTimer()
         onListeningStarted()
         Log.d(TAG, "Bắt đầu nghe…")
@@ -107,13 +106,23 @@ class SpeechToTextManager(
 
     /**
      * Dừng nghe sớm (ví dụ user tap lại, hoặc do silence timeout).
-     * Phải gọi trên main thread.
+     * Phải gọi trên main thread. PHẦN 27 (fix) — xem doc ở đầu file.
      */
     fun stopListening() {
         if (!isListening) return
         cancelSilenceTimer()
-        recognizer?.stopListening()
+        try {
+            if (readyForSpeech) {
+                recognizer?.stopListening()
+            } else {
+                Log.w(TAG, "stopListening() gọi trước onReadyForSpeech — dùng cancel() an toàn hơn")
+                recognizer?.cancel()
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "stopListening/cancel lỗi: ${e.message}")
+        }
         isListening = false
+        readyForSpeech = false
         onListeningStopped()
         Log.d(TAG, "Dừng nghe")
     }
@@ -121,9 +130,14 @@ class SpeechToTextManager(
     /** Giải phóng tài nguyên. Phải gọi trên main thread khi service bị destroy. */
     fun release() {
         cancelSilenceTimer()
-        recognizer?.destroy()
+        try {
+            recognizer?.destroy()
+        } catch (e: Exception) {
+            Log.e(TAG, "release lỗi: ${e.message}")
+        }
         recognizer = null
         isListening = false
+        readyForSpeech = false
         Log.d(TAG, "SpeechRecognizer released")
     }
 
@@ -133,7 +147,7 @@ class SpeechToTextManager(
 
     private fun resetSilenceTimer() {
         mainHandler.removeCallbacks(silenceTimeoutRunnable)
-        mainHandler.postDelayed(silenceTimeoutRunnable, SILENCE_TIMEOUT_MS)
+        mainHandler.postDelayed(silenceTimeoutRunnable, activeSilenceTimeoutMs)
     }
 
     private fun cancelSilenceTimer() {
@@ -144,6 +158,7 @@ class SpeechToTextManager(
 
         override fun onReadyForSpeech(params: Bundle?) {
             Log.d(TAG, "onReadyForSpeech")
+            readyForSpeech = true
         }
 
         override fun onBeginningOfSpeech() {
@@ -152,7 +167,6 @@ class SpeechToTextManager(
         }
 
         override fun onRmsChanged(rmsdB: Float) {
-            // Có âm thanh đủ lớn → reset bộ đếm im lặng
             if (rmsdB > RMS_THRESHOLD) resetSilenceTimer()
         }
 
@@ -166,9 +180,8 @@ class SpeechToTextManager(
             Log.w(TAG, "onError: $error (${sttErrorName(error)})")
             cancelSilenceTimer()
             isListening = false
+            readyForSpeech = false
             onListeningStopped()
-            // ERROR_NO_MATCH thường xảy ra khi dùng partialResults; kết quả thực sự đến qua
-            // onPartialResults / onResults rồi → đây ta dùng partialText đã tích luỹ.
             if (error == SpeechRecognizer.ERROR_NO_MATCH && partialText.isNotEmpty()) {
                 onResult(partialText.trim())
             } else {
@@ -179,6 +192,7 @@ class SpeechToTextManager(
         override fun onResults(results: Bundle?) {
             cancelSilenceTimer()
             isListening = false
+            readyForSpeech = false
             onListeningStopped()
             val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
             val text = matches?.firstOrNull()?.trim() ?: partialText.trim()
@@ -191,7 +205,6 @@ class SpeechToTextManager(
             val partial = matches?.firstOrNull() ?: return
             partialText = partial
             Log.v(TAG, "Partial: \"$partial\"")
-            // Reset bộ đếm im lặng mỗi khi nhận thêm partial (người dùng vẫn đang nói)
             resetSilenceTimer()
         }
 

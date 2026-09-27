@@ -474,6 +474,11 @@ class ChibiWallpaperService : WallpaperService() {
             log("Quad-tap tại (${x.toInt()}, ${y.toInt()}) — mở Hỏi bằng ảnh")
             if (stateMachine.state != CharacterStateMachine.State.ROAMING) return
             if (scene.isTransitioning()) return
+            openPhotoAskActivity()
+        }
+
+        /** PHẦN 26 — Tách riêng để dùng chung giữa quad-tap (PHẦN 12) và function call open_photo_ask. */
+        private fun openPhotoAskActivity() {
             try {
                 val intent = Intent(applicationContext, PhotoAskActivity::class.java).apply {
                     addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
@@ -515,7 +520,7 @@ class ChibiWallpaperService : WallpaperService() {
             // là chuyện bình thường (đang chờ người kia nói) — nghe lại ngay, KHÔNG coi là lỗi,
             // không hiện bong bóng lỗi/khóc như luồng chat thường.
             if (stateMachine.state == CharacterStateMachine.State.TRANSLATING) {
-                mainHandler.post { sttManager.startListening() }
+                mainHandler.post { sttManager.startListening(SpeechToTextManager.BILINGUAL_SILENCE_TIMEOUT_MS) }
                 return
             }
 
@@ -606,6 +611,16 @@ class ChibiWallpaperService : WallpaperService() {
                 // PHẦN 16 — Hội thoại song phương.
                 is RoutedAction.StartBilingualMode -> startBilingualMode(action.targetLanguage)
                 is RoutedAction.StopBilingualMode -> stopBilingualMode()
+                // PHẦN 26 — "Hỏi bằng ảnh" qua giọng nói, không cần quad-tap nữa. State lúc này
+                // đang THINKING (đã startThinking() trước khi gọi Gemini), không phải ROAMING, nên
+                // KHÔNG kiểm tra state như quad-tap cũ — chỉ tránh mở đè lên lúc cổng đang chạy.
+                is RoutedAction.OpenPhotoAsk -> {
+                    if (!scene.isTransitioning()) {
+                        openPhotoAskActivity()
+                        stateMachine.backToRoaming()
+                        scene.applyState(stateMachine)
+                    }
+                }
             }
         }
 
@@ -635,7 +650,7 @@ class ChibiWallpaperService : WallpaperService() {
             bilingualTargetLang = targetLanguage.ifBlank { DEFAULT_BILINGUAL_TARGET_LANG }
             log("Bật hội thoại song phương — target=$bilingualTargetLang")
             scene.applyState(stateMachine)
-            mainHandler.post { sttManager.startListening() }
+            mainHandler.post { sttManager.startListening(SpeechToTextManager.BILINGUAL_SILENCE_TIMEOUT_MS) }
         }
 
         /**
@@ -662,7 +677,7 @@ class ChibiWallpaperService : WallpaperService() {
                 if (result == null) {
                     stateMachine.updateTranslationBubble("Mình dịch bị lỗi mạng, đang nghe tiếp câu khác~")
                     scene.applyState(stateMachine)
-                    mainHandler.post { sttManager.startListening() }
+                    mainHandler.post { sttManager.startListening(SpeechToTextManager.BILINGUAL_SILENCE_TIMEOUT_MS) }
                     return@launch
                 }
 
@@ -672,7 +687,7 @@ class ChibiWallpaperService : WallpaperService() {
                 ttsHelper.speak(result.translatedText, result.targetLang) {
                     mainHandler.post {
                         if (stateMachine.state == CharacterStateMachine.State.TRANSLATING) {
-                            sttManager.startListening()
+                            sttManager.startListening(SpeechToTextManager.BILINGUAL_SILENCE_TIMEOUT_MS)
                         }
                     }
                 }

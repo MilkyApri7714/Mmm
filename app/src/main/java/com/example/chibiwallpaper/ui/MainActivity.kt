@@ -105,11 +105,20 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun clearWallpaperInternal() {
-        try {
+    private fun clearWallpaperInternal(): Boolean {
+        return try {
             WallpaperManager.getInstance(this).clear()
+            true
+        } catch (e: SecurityException) {
+            // PHẦN 23 (fix) — Trước đây thiếu <uses-permission SET_WALLPAPER> trong manifest nên
+            // LUÔN rơi vào đây (âm thầm, chỉ log) mỗi lần bấm tắt switch — hình nền không hề bị
+            // xoá, switch tự bật lại ngay vì isActive không đổi. Đã thêm quyền vào manifest; log
+            // rõ ràng thêm ở đây phòng khi máy nào đó vẫn còn thiếu (ví dụ cài đè bản cũ chưa gỡ).
+            Log.e(TAG, "clear() thiếu quyền SET_WALLPAPER: ${e.message}")
+            false
         } catch (e: Exception) {
             Log.e(TAG, "clear() thất bại: ${e.message}")
+            false
         }
     }
 
@@ -176,7 +185,7 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun SettingsScreen(
     onSetWallpaper    : () -> Unit,
-    onClearWallpaper  : () -> Unit,
+    onClearWallpaper  : () -> Boolean,
     onOpenFallback    : () -> Unit,
     onOpenAppSettings : () -> Unit,
     prefs             : SharedPreferences
@@ -264,7 +273,7 @@ fun SettingsScreen(
 @Composable
 fun WallpaperSection(
     onSetWallpaper   : () -> Unit,
-    onClearWallpaper : () -> Unit,
+    onClearWallpaper : () -> Boolean,
     onOpenFallback   : () -> Unit,
     prefs            : SharedPreferences
 ) {
@@ -295,7 +304,22 @@ fun WallpaperSection(
             }
             Switch(
                 checked = isActive,
-                onCheckedChange = { if (it) onSetWallpaper() else onClearWallpaper() }
+                onCheckedChange = { turnOn ->
+                    if (turnOn) {
+                        onSetWallpaper()
+                        // KHÔNG set isActive=true ở đây: ACTION_CHANGE_LIVE_WALLPAPER mở màn hình
+                        // hệ thống, còn cần user bấm xác nhận ở đó — kết quả THẬT chỉ biết được
+                        // lúc quay lại app (ON_RESUME ở trên đã tự gọi isChibiWallpaperActive lại).
+                    } else {
+                        // PHẦN 23 (fix) — TRƯỚC ĐÂY: gọi onClearWallpaper() (Unit) rồi KHÔNG cập
+                        // nhật isActive gì cả → vì clear() chạy đồng bộ (không mở activity nào
+                        // khác) nên KHÔNG có ON_RESUME nào bắn ra để tự refresh → switch bị Compose
+                        // vẽ lại ngay với isActive cũ (true) → nhìn như vừa bấm tắt xong tự bật lại.
+                        // Giờ dùng thẳng kết quả true/false của onClearWallpaper() để cập nhật state
+                        // ngay lập tức, không phụ thuộc lifecycle nữa.
+                        isActive = !onClearWallpaper()
+                    }
+                }
             )
         }
         Spacer(Modifier.height(6.dp))
